@@ -7,6 +7,7 @@ require dirname(__FILE__) . '/Colors.php';
 defined('TIME_NOW') or define('TIME_NOW', time());
 defined('DATE_FORMAT') or define('DATE_FORMAT', 'Y-m-d H:i:s');
 
+define('REGEX_DELIMITER', '/');
 define('REGEX_VALID_OPTION', '(\-+)?([a-zA-Z0-9\_][a-zA-Z0-9\_\-]*)');
 define('REGEX_COMBINED_OPTION', REGEX_VALID_OPTION . '\=([^\s]+)');
 
@@ -30,30 +31,32 @@ abstract class PhpCli {
 	private $arrFlagTrue = ['true', 'yes', 'on', '1'];
 
 	private $arrDefaults = [
-		'verbose' => [
-			'type' => 'boolean',
-			'default' => false,
-			'description' => 'Extra debugging output'
+		'version' => [
+			'type' => 'action',
+			'alias' => 'v',
+			'function' => 'showVersion',
+			'description' => 'Show version info'
 		],
 		'help' => [
 			'type' => 'action',
 			'function' => 'showHelp',
 			'description' => 'Show help info'
 		],
-		'version' => [
-			'type' => 'action',
-			'function' => 'showVersion',
-			'description' => 'Show version info'
+		'verbose' => [
+			'type' => 'boolean',
+			'alias' => 'vb',
+			'default' => false,
+			'description' => 'Extra debugging output'
 		]
 	];
 
 	private $arrMsgTypeColors = [
-    'log' => null, 
-    'warn' => 'yellow',
-    'error' => 'red',
-    'debug' => 'cyan',
-    'success' => 'green'
-  ];
+	    'log' => null, 
+	    'warn' => 'yellow',
+	    'error' => 'red',
+	    'debug' => 'cyan',
+	    'success' => 'green'
+	];
 
 	public function __construct($arrArgs) {
 		$this->objColors = new Colors();
@@ -134,6 +137,10 @@ abstract class PhpCli {
 			case 'action':
 			case 'function':
 				return 'action';
+
+			case 'regex':
+			case 'pattern':
+				return 'regex';
 
 			default:
 				return 'any';
@@ -244,6 +251,9 @@ abstract class PhpCli {
 					case 'boolean':
 						return is_bool($mixValue) || (strtolower($mixValue) == 'true');
 
+					case 'regex':
+						return preg_match($this->getPattern($mixValue), null) !== false;
+
 					default:
 						$this->warn("Unable to validate option: '{$strOption}' for type: '{$strType}'");
 						return true;
@@ -270,8 +280,16 @@ abstract class PhpCli {
 		return null;
 	}
 
-	private function getPattern($strRegex) {
-		return "/{$strRegex}/";
+	protected function getPattern($strRegex) {
+		if (substr($strRegex, 0, 1) === substr($strRegex, -1)) {
+			$chrDelimiter = substr($strRegex, 0, 1);
+
+			if (!preg_match('/[a-zA-Z0-9\\\s]/', $chrDelimiter)) {
+				return $strRegex;
+			}
+		}
+
+		return REGEX_DELIMITER . $strRegex . REGEX_DELIMITER;
 	}
 
 	protected function getOption($strOption) {
@@ -313,7 +331,7 @@ abstract class PhpCli {
   }
 
   protected function info($strMsg) {
-  	$this->log($this->getInfo('basename'));
+  	$this->log($this->getInfo('basename') . ' - ' . $this->getInfo('version'));
   	$this->log();
   	$this->log($strMsg);
   }
@@ -335,23 +353,57 @@ abstract class PhpCli {
   }
 
   protected function showHelp() {
-  	$intSepCount = 4;
+  	$intSepCount = 3;
   	$strSep = str_repeat("\t", $intSepCount);
 
-  	$this->info('Options:');
-  	$this->log("\tAlias\tOption{$strSep}Description");
-  	$this->log();
+  	$this->info('Help:');
+
+  	$arrHelpStructure = [
+  		'option' => 20,
+  		'alias' => 10,
+  		'required' => 15,
+  		'default' => 30,
+  		'description' => 60
+  	];
+
+  	$arrHelpInfo = [];
+
+  	function buildHeaders($strHdr, $intPad) {
+  		return str_pad(ucfirst($strHdr), $intPad);
+  	}
+
+  	$strHeaderLine = implode('', array_map("buildHeaders", array_keys($arrHelpStructure), array_values($arrHelpStructure)));
+
+  	$arrHelpInfo[] = str_repeat('-', strlen($strHeaderLine));
+  	$arrHelpInfo[] = $strHeaderLine;
+  	$arrHelpInfo[] = str_repeat('-', strlen($strHeaderLine));
 
   	foreach ($this->arrAllowed as $strOption => $arrOptionInfo) {
-  		$strAlias = isset($arrOptionInfo['alias']) ? '(' . $arrOptionInfo['alias'] . ') ' : '';
-  		$strDescription = isset($arrOptionInfo['description']) ? $arrOptionInfo['description'] : 'No description';
+  		$arrHelpLine = [];
 
-  		$intNumTabs = $intSepCount - floor((strlen($strOption)) / 8);
+  		foreach (array_keys($arrHelpStructure) as $strKey) {
+  			$mixValue = isset($arrOptionInfo[$strKey]) ? $arrOptionInfo[$strKey] : null;
 
-  		$strSep = str_repeat("\t", $intNumTabs);
+  			if ($strKey === 'option') {
+  				$mixValue = $strOption;
+  			} else if ($strKey === 'default' && is_string($mixValue)) {
+  				$mixValue = "'{$mixValue}'";
+  			} else if (is_null($mixValue)) {
+  				$mixValue = '-';
+  			} else if (is_bool($mixValue)) {
+  				$mixValue = $mixValue ? 'true' : 'false';
+  			}
 
-  		$this->log("\t{$strAlias}\t{$strOption}{$strSep}- {$strDescription}");
+  			$intPadLength = $arrHelpStructure[$strKey];
+  			$arrHelpLine[] = str_pad($mixValue, $intPadLength);
+  		}
+
+  		$arrHelpInfo[] = implode('', $arrHelpLine);
   	}
+  	
+  	$arrHelpInfo[] = str_repeat('-', strlen($strHeaderLine));
+
+  	$this->log(implode("\n", $arrHelpInfo));
 
   	exit;
   }
